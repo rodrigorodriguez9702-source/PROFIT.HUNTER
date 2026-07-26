@@ -1,6 +1,10 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
-void main() {
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProfitHunterApp());
 }
 
@@ -28,6 +32,34 @@ class Hunt {
   double minProfit;
   int radiusMiles;
   bool isActive;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'keywords': keywords,
+      'modelNumber': modelNumber,
+      'sku': sku,
+      'maxBuyPrice': maxBuyPrice,
+      'minProfit': minProfit,
+      'radiusMiles': radiusMiles,
+      'isActive': isActive,
+    };
+  }
+
+  factory Hunt.fromJson(Map<String, dynamic> json) {
+    return Hunt(
+      id: json['id'] as int,
+      name: json['name'] as String? ?? '',
+      keywords: json['keywords'] as String? ?? '',
+      modelNumber: json['modelNumber'] as String? ?? '',
+      sku: json['sku'] as String? ?? '',
+      maxBuyPrice: (json['maxBuyPrice'] as num?)?.toDouble() ?? 0,
+      minProfit: (json['minProfit'] as num?)?.toDouble() ?? 0,
+      radiusMiles: (json['radiusMiles'] as num?)?.toInt() ?? 30,
+      isActive: json['isActive'] as bool? ?? true,
+    );
+  }
 }
 
 class ProfitHunterApp extends StatelessWidget {
@@ -58,11 +90,21 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
+  static const String huntsKey = 'profit_hunter_hunts_v2';
+  static const String planKey = 'profit_hunter_plan_v2';
+
   int selectedIndex = 0;
   HunterPlan plan = HunterPlan.casual;
   int nextHuntId = 1;
+  bool isLoading = true;
 
   final List<Hunt> hunts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    loadSavedData();
+  }
 
   int get activeHuntCount =>
       hunts.where((hunt) => hunt.isActive).length;
@@ -72,14 +114,80 @@ class _HomeShellState extends State<HomeShell> {
     return activeHuntCount < 2;
   }
 
-  void addHunt(Hunt hunt) {
+  Future<void> loadSavedData() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final savedHunts = prefs.getString(huntsKey);
+    final savedPlan = prefs.getString(planKey);
+
+    final loadedHunts = <Hunt>[];
+
+    if (savedHunts != null && savedHunts.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(savedHunts) as List<dynamic>;
+
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            loadedHunts.add(Hunt.fromJson(item));
+          } else if (item is Map) {
+            loadedHunts.add(
+              Hunt.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      hunts
+        ..clear()
+        ..addAll(loadedHunts);
+
+      plan = savedPlan == HunterPlan.avid.name
+          ? HunterPlan.avid
+          : HunterPlan.casual;
+
+      if (hunts.isNotEmpty) {
+        final highestId = hunts
+            .map((hunt) => hunt.id)
+            .reduce((a, b) => a > b ? a : b);
+
+        nextHuntId = highestId + 1;
+      }
+
+      isLoading = false;
+    });
+  }
+
+  Future<void> saveHunts() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final encoded = jsonEncode(
+      hunts.map((hunt) => hunt.toJson()).toList(),
+    );
+
+    await prefs.setString(huntsKey, encoded);
+  }
+
+  Future<void> savePlan() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(planKey, plan.name);
+  }
+
+  Future<void> addHunt(Hunt hunt) async {
     setState(() {
       hunts.add(hunt);
       nextHuntId += 1;
     });
+
+    await saveHunts();
   }
 
-  void updateHunt(Hunt updated) {
+  Future<void> updateHunt(Hunt updated) async {
     setState(() {
       final index =
           hunts.indexWhere((hunt) => hunt.id == updated.id);
@@ -88,50 +196,75 @@ class _HomeShellState extends State<HomeShell> {
         hunts[index] = updated;
       }
     });
+
+    await saveHunts();
   }
 
-  void deleteHunt(int huntId) {
+  Future<void> deleteHunt(int huntId) async {
     setState(() {
       hunts.removeWhere((hunt) => hunt.id == huntId);
     });
+
+    await saveHunts();
   }
 
-  void toggleHunt(int huntId) {
-    setState(() {
-      final hunt =
-          hunts.firstWhere((item) => item.id == huntId);
+  Future<void> toggleHunt(int huntId) async {
+    final hunt =
+        hunts.firstWhere((item) => item.id == huntId);
 
-      if (!hunt.isActive &&
-          plan == HunterPlan.casual &&
-          activeHuntCount >= 2) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Casual Hunter allows up to 2 active hunts.',
-            ),
+    if (!hunt.isActive &&
+        plan == HunterPlan.casual &&
+        activeHuntCount >= 2) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Casual Hunter allows up to 2 active hunts.',
           ),
-        );
-        return;
-      }
+        ),
+      );
 
+      return;
+    }
+
+    setState(() {
       hunt.isActive = !hunt.isActive;
     });
+
+    await saveHunts();
   }
 
-  void upgradeToAvid() {
+  Future<void> upgradeToAvid() async {
     setState(() {
       plan = HunterPlan.avid;
     });
 
+    await savePlan();
+
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Avid Hunter unlocked for this prototype.'),
+        content: Text(
+          'Avid Hunter unlocked for this prototype.',
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
     final pages = [
       DashboardPage(
         plan: plan,
@@ -323,11 +456,11 @@ class HuntsPage extends StatelessWidget {
   final bool canCreateAnotherHunt;
   final int nextHuntId;
 
-  final ValueChanged<Hunt> onAddHunt;
-  final ValueChanged<Hunt> onUpdateHunt;
-  final ValueChanged<int> onDeleteHunt;
-  final ValueChanged<int> onToggleHunt;
-  final VoidCallback onUpgrade;
+  final Future<void> Function(Hunt) onAddHunt;
+  final Future<void> Function(Hunt) onUpdateHunt;
+  final Future<void> Function(int) onDeleteHunt;
+  final Future<void> Function(int) onToggleHunt;
+  final Future<void> Function() onUpgrade;
 
   void openCreateHunt(BuildContext context) {
     if (!canCreateAnotherHunt) {
@@ -416,8 +549,9 @@ class HuntsPage extends StatelessWidget {
               hunt: hunt,
               onEdit: () =>
                   openEditHunt(context, hunt),
-              onToggle: () =>
-                  onToggleHunt(hunt.id),
+              onToggle: () async {
+                await onToggleHunt(hunt.id);
+              },
               onDelete: () {
                 showDialog<void>(
                   context: context,
@@ -434,9 +568,9 @@ class HuntsPage extends StatelessWidget {
                         child: const Text('Cancel'),
                       ),
                       FilledButton(
-                        onPressed: () {
+                        onPressed: () async {
                           Navigator.pop(dialogContext);
-                          onDeleteHunt(hunt.id);
+                          await onDeleteHunt(hunt.id);
                         },
                         child: const Text('Delete'),
                       ),
@@ -560,7 +694,7 @@ class HuntFormPage extends StatefulWidget {
 
   final String title;
   final int huntId;
-  final ValueChanged<Hunt> onSave;
+  final Future<void> Function(Hunt) onSave;
   final Hunt? existingHunt;
 
   @override
@@ -577,6 +711,8 @@ class _HuntFormPageState
   late final TextEditingController maxBuyController;
   late final TextEditingController minProfitController;
   late final TextEditingController radiusController;
+
+  bool isSaving = false;
 
   @override
   void initState() {
@@ -631,7 +767,7 @@ class _HuntFormPageState
     super.dispose();
   }
 
-  void saveHunt() {
+  Future<void> saveHunt() async {
     final name = nameController.text.trim();
     final keywords = keywordController.text.trim();
 
@@ -668,6 +804,10 @@ class _HuntFormPageState
       return;
     }
 
+    setState(() {
+      isSaving = true;
+    });
+
     final existing = widget.existingHunt;
 
     final hunt = Hunt(
@@ -682,7 +822,10 @@ class _HuntFormPageState
       isActive: existing?.isActive ?? true,
     );
 
-    widget.onSave(hunt);
+    await widget.onSave(hunt);
+
+    if (!mounted) return;
+
     Navigator.pop(context);
   }
 
@@ -767,9 +910,13 @@ class _HuntFormPageState
           const SizedBox(height: 24),
 
           FilledButton.icon(
-            onPressed: saveHunt,
+            onPressed: isSaving ? null : saveHunt,
             icon: const Icon(Icons.save),
-            label: const Text('SAVE HUNT'),
+            label: Text(
+              isSaving
+                  ? 'SAVING...'
+                  : 'SAVE HUNT',
+            ),
           ),
         ],
       ),
@@ -783,7 +930,7 @@ class UpgradePage extends StatelessWidget {
     required this.onUpgrade,
   });
 
-  final VoidCallback onUpgrade;
+  final Future<void> Function() onUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -848,8 +995,11 @@ class UpgradePage extends StatelessWidget {
           const SizedBox(height: 12),
 
           FilledButton(
-            onPressed: () {
-              onUpgrade();
+            onPressed: () async {
+              await onUpgrade();
+
+              if (!context.mounted) return;
+
               Navigator.pop(context);
             },
             child: const Text(
@@ -936,7 +1086,7 @@ class SettingsPage extends StatelessWidget {
 
   final HunterPlan plan;
   final int activeHuntCount;
-  final VoidCallback onUpgrade;
+  final Future<void> Function() onUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -1045,6 +1195,7 @@ class SimplePage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
+
         Text(
           description,
           style: const TextStyle(
@@ -1076,6 +1227,7 @@ class StatCard extends StatelessWidget {
               MainAxisAlignment.spaceBetween,
           children: [
             Text(title),
+
             Text(
               value,
               style: const TextStyle(
