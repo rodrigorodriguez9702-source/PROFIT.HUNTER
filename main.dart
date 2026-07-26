@@ -28,7 +28,7 @@ class Deal {
   final int score;
   final String? model;
   final String? sku;
-colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+colorScheme: .fromSeed(seedColor: Colors.deepPurple),
   double get profit => resale - price;
 }
 
@@ -101,8 +101,8 @@ class Shell extends StatefulWidget {
   final VoidCallback onUpgrade;
   final ValueChanged<Hunt> onAddHunt;
   final ValueChanged<Flip> onAddFlip;
-
-  mainAxisAlignment: MainAxisAlignment.center,
+  
+  maimainAxisAlignment: MainAxisAlignment.center,
   State<Shell> createState() => _ShellState();
 }
 
