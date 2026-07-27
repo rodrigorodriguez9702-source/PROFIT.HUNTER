@@ -10,6 +10,36 @@ Future<void> main() async {
 
 enum HunterPlan { casual, avid }
 
+class UserProfile {
+  UserProfile({
+    required this.name,
+    required this.email,
+    required this.plan,
+  });
+
+  final String name;
+  final String email;
+  final HunterPlan plan;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'email': email,
+      'plan': plan.name,
+    };
+  }
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) {
+    return UserProfile(
+      name: json['name'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      plan: (json['plan'] as String?) == HunterPlan.avid.name
+          ? HunterPlan.avid
+          : HunterPlan.casual,
+    );
+  }
+}
+
 class Hunt {
   Hunt({
     required this.id,
@@ -49,7 +79,7 @@ class Hunt {
 
   factory Hunt.fromJson(Map<String, dynamic> json) {
     return Hunt(
-      id: json['id'] as int,
+      id: (json['id'] as num?)?.toInt() ?? 0,
       name: json['name'] as String? ?? '',
       keywords: json['keywords'] as String? ?? '',
       modelNumber: json['modelNumber'] as String? ?? '',
@@ -77,59 +107,285 @@ class ProfitHunterApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomeShell(),
+      home: const AppGate(),
+    );
+  }
+}
+
+class AppGate extends StatefulWidget {
+  const AppGate({super.key});
+
+  @override
+  State<AppGate> createState() => _AppGateState();
+}
+
+class _AppGateState extends State<AppGate> {
+  static const profileKey = 'profit_hunter_profile_v1';
+
+  bool isLoading = true;
+  UserProfile? profile;
+
+  @override
+  void initState() {
+    super.initState();
+    loadProfile();
+  }
+
+  Future<void> loadProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(profileKey);
+
+    UserProfile? loaded;
+
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+
+        if (decoded is Map) {
+          loaded = UserProfile.fromJson(
+            Map<String, dynamic>.from(decoded),
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      profile = loaded;
+      isLoading = false;
+    });
+  }
+
+  Future<void> saveProfile(UserProfile newProfile) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString(
+      profileKey,
+      jsonEncode(newProfile.toJson()),
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      profile = newProfile;
+    });
+  }
+
+  Future<void> signOut() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove(profileKey);
+
+    if (!mounted) return;
+
+    setState(() {
+      profile = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
+    if (profile == null) {
+      return AccountSetupPage(
+        onCreateAccount: saveProfile,
+      );
+    }
+
+    return HomeShell(
+      profile: profile!,
+      onProfileUpdated: saveProfile,
+      onSignOut: signOut,
+    );
+  }
+}
+
+class AccountSetupPage extends StatefulWidget {
+  const AccountSetupPage({
+    super.key,
+    required this.onCreateAccount,
+  });
+
+  final Future<void> Function(UserProfile) onCreateAccount;
+
+  @override
+  State<AccountSetupPage> createState() => _AccountSetupPageState();
+}
+
+class _AccountSetupPageState extends State<AccountSetupPage> {
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+
+  bool isSaving = false;
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> createAccount() async {
+    final name = nameController.text.trim();
+    final email = emailController.text.trim();
+
+    if (name.isEmpty || email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter your name and a valid email address.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    setState(() {
+      isSaving = true;
+    });
+
+    await widget.onCreateAccount(
+      UserProfile(
+        name: name,
+        email: email,
+        plan: HunterPlan.casual,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const SizedBox(height: 30),
+
+            const Text(
+              '🔥 PROFIT HUNTER',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            const Text(
+              'Create your Hunter profile',
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 30),
+
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            FilledButton.icon(
+              onPressed: isSaving ? null : createAccount,
+              icon: const Icon(Icons.person_add),
+              label: Text(
+                isSaving
+                    ? 'CREATING...'
+                    : 'CREATE ACCOUNT',
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            const Text(
+              'Accounts v1 stores your profile on this device.',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({
+    super.key,
+    required this.profile,
+    required this.onProfileUpdated,
+    required this.onSignOut,
+  });
+
+  final UserProfile profile;
+  final Future<void> Function(UserProfile) onProfileUpdated;
+  final Future<void> Function() onSignOut;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends State<HomeShell> {
-  static const String huntsKey = 'profit_hunter_hunts_v2';
-  static const String planKey = 'profit_hunter_plan_v2';
+  static const huntsKey = 'profit_hunter_hunts_v2';
 
   int selectedIndex = 0;
-  HunterPlan plan = HunterPlan.casual;
   int nextHuntId = 1;
   bool isLoading = true;
 
   final List<Hunt> hunts = [];
 
+  HunterPlan get plan => widget.profile.plan;
+
   @override
   void initState() {
     super.initState();
-    loadSavedData();
+    loadHunts();
   }
 
   int get activeHuntCount =>
       hunts.where((hunt) => hunt.isActive).length;
 
   bool get canCreateAnotherHunt {
-    if (plan == HunterPlan.avid) return true;
-    return activeHuntCount < 2;
+    return plan == HunterPlan.avid ||
+        activeHuntCount < 2;
   }
 
-  Future<void> loadSavedData() async {
+  Future<void> loadHunts() async {
     final prefs = await SharedPreferences.getInstance();
-
-    final savedHunts = prefs.getString(huntsKey);
-    final savedPlan = prefs.getString(planKey);
+    final raw = prefs.getString(huntsKey);
 
     final loadedHunts = <Hunt>[];
 
-    if (savedHunts != null && savedHunts.isNotEmpty) {
+    if (raw != null && raw.isNotEmpty) {
       try {
-        final decoded = jsonDecode(savedHunts) as List<dynamic>;
+        final decoded = jsonDecode(raw) as List<dynamic>;
 
         for (final item in decoded) {
-          if (item is Map<String, dynamic>) {
-            loadedHunts.add(Hunt.fromJson(item));
-          } else if (item is Map) {
+          if (item is Map) {
             loadedHunts.add(
               Hunt.fromJson(
                 Map<String, dynamic>.from(item),
@@ -147,10 +403,6 @@ class _HomeShellState extends State<HomeShell> {
         ..clear()
         ..addAll(loadedHunts);
 
-      plan = savedPlan == HunterPlan.avid.name
-          ? HunterPlan.avid
-          : HunterPlan.casual;
-
       if (hunts.isNotEmpty) {
         final highestId = hunts
             .map((hunt) => hunt.id)
@@ -166,16 +418,12 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> saveHunts() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final encoded = jsonEncode(
-      hunts.map((hunt) => hunt.toJson()).toList(),
+    await prefs.setString(
+      huntsKey,
+      jsonEncode(
+        hunts.map((hunt) => hunt.toJson()).toList(),
+      ),
     );
-
-    await prefs.setString(huntsKey, encoded);
-  }
-
-  Future<void> savePlan() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(planKey, plan.name);
   }
 
   Future<void> addHunt(Hunt hunt) async {
@@ -202,7 +450,9 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> deleteHunt(int huntId) async {
     setState(() {
-      hunts.removeWhere((hunt) => hunt.id == huntId);
+      hunts.removeWhere(
+        (hunt) => hunt.id == huntId,
+      );
     });
 
     await saveHunts();
@@ -236,19 +486,11 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> upgradeToAvid() async {
-    setState(() {
-      plan = HunterPlan.avid;
-    });
-
-    await savePlan();
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Avid Hunter unlocked for this prototype.',
-        ),
+    await widget.onProfileUpdated(
+      UserProfile(
+        name: widget.profile.name,
+        email: widget.profile.email,
+        plan: HunterPlan.avid,
       ),
     );
   }
@@ -267,10 +509,11 @@ class _HomeShellState extends State<HomeShell> {
 
     final pages = [
       DashboardPage(
-        plan: plan,
+        profile: widget.profile,
         hunts: hunts,
         activeHuntCount: activeHuntCount,
       ),
+
       HuntsPage(
         plan: plan,
         hunts: hunts,
@@ -283,12 +526,16 @@ class _HomeShellState extends State<HomeShell> {
         onToggleHunt: toggleHunt,
         onUpgrade: upgradeToAvid,
       ),
+
       const DealsPage(),
+
       const FlipsPage(),
+
       SettingsPage(
-        plan: plan,
+        profile: widget.profile,
         activeHuntCount: activeHuntCount,
         onUpgrade: upgradeToAvid,
+        onSignOut: widget.onSignOut,
       ),
     ];
 
@@ -296,30 +543,37 @@ class _HomeShellState extends State<HomeShell> {
       body: SafeArea(
         child: pages[selectedIndex],
       ),
+
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
+
         onDestinationSelected: (index) {
           setState(() {
             selectedIndex = index;
           });
         },
+
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home),
             label: 'Home',
           ),
+
           NavigationDestination(
             icon: Icon(Icons.track_changes),
             label: 'Hunts',
           ),
+
           NavigationDestination(
             icon: Icon(Icons.local_fire_department),
             label: 'Deals',
           ),
+
           NavigationDestination(
             icon: Icon(Icons.inventory_2),
             label: 'Flips',
           ),
+
           NavigationDestination(
             icon: Icon(Icons.settings),
             label: 'Settings',
@@ -333,12 +587,12 @@ class _HomeShellState extends State<HomeShell> {
 class DashboardPage extends StatelessWidget {
   const DashboardPage({
     super.key,
-    required this.plan,
+    required this.profile,
     required this.hunts,
     required this.activeHuntCount,
   });
 
-  final HunterPlan plan;
+  final UserProfile profile;
   final List<Hunt> hunts;
   final int activeHuntCount;
 
@@ -346,6 +600,7 @@ class DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(20),
+
       children: [
         const Text(
           '🔥 PROFIT HUNTER',
@@ -354,28 +609,40 @@ class DashboardPage extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
+
         const SizedBox(height: 6),
+
         Text(
-          plan == HunterPlan.avid
+          'Welcome, ${profile.name}',
+        ),
+
+        Text(
+          profile.plan == HunterPlan.avid
               ? 'Avid Hunter'
               : 'Casual Hunter',
         ),
+
         const SizedBox(height: 24),
+
         StatCard(
           title: 'Active Hunts',
-          value: plan == HunterPlan.avid
+          value: profile.plan == HunterPlan.avid
               ? '$activeHuntCount'
               : '$activeHuntCount / 2',
         ),
+
         const StatCard(
           title: 'Deals Found',
           value: '3',
         ),
+
         const StatCard(
           title: 'Potential Profit',
           value: '\$365',
         ),
+
         const SizedBox(height: 24),
+
         const Text(
           'Your Hunts',
           style: TextStyle(
@@ -383,11 +650,14 @@ class DashboardPage extends StatelessWidget {
             fontWeight: FontWeight.bold,
           ),
         ),
+
         const SizedBox(height: 12),
+
         if (hunts.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(18),
+
               child: Text(
                 'No hunts yet. Open the Hunts tab to create your first one.',
               ),
@@ -395,41 +665,24 @@ class DashboardPage extends StatelessWidget {
           )
         else
           ...hunts.take(3).map(
-                (hunt) => Card(
-                  child: ListTile(
-                    leading: Icon(
-                      hunt.isActive
-                          ? Icons.radar
-                          : Icons.pause_circle_outline,
-                    ),
-                    title: Text(hunt.name),
-                    subtitle: Text(
-                      hunt.isActive ? 'Active' : 'Paused',
-                    ),
-                  ),
+            (hunt) => Card(
+              child: ListTile(
+                leading: Icon(
+                  hunt.isActive
+                      ? Icons.radar
+                      : Icons.pause_circle_outline,
+                ),
+
+                title: Text(hunt.name),
+
+                subtitle: Text(
+                  hunt.isActive
+                      ? 'Active'
+                      : 'Paused',
                 ),
               ),
-        const SizedBox(height: 24),
-        const Text(
-          'Top Opportunities',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        const DealCard(
-          title: 'Milwaukee M18 Fuel Kit',
-          buyPrice: 120,
-          resalePrice: 260,
-          hunterScore: 94,
-        ),
-        const DealCard(
-          title: 'DeWalt 20V Tool Bundle',
-          buyPrice: 100,
-          resalePrice: 240,
-          hunterScore: 95,
-        ),
       ],
     );
   }
@@ -471,6 +724,7 @@ class HuntsPage extends StatelessWidget {
           ),
         ),
       );
+
       return;
     }
 
@@ -503,12 +757,14 @@ class HuntsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final huntLimitText = plan == HunterPlan.avid
-        ? '$activeHuntCount active • Unlimited hunts'
-        : '$activeHuntCount / 2 active hunts';
+    final huntLimitText =
+        plan == HunterPlan.avid
+            ? '$activeHuntCount active • Unlimited hunts'
+            : '$activeHuntCount / 2 active hunts';
 
     return ListView(
       padding: const EdgeInsets.all(20),
+
       children: [
         const Text(
           '🎯 My Hunts',
@@ -517,27 +773,37 @@ class HuntsPage extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
+
         const SizedBox(height: 6),
+
         Text(huntLimitText),
+
         const SizedBox(height: 20),
+
         FilledButton.icon(
-          onPressed: () => openCreateHunt(context),
+          onPressed: () =>
+              openCreateHunt(context),
+
           icon: Icon(
             canCreateAnotherHunt
                 ? Icons.add
                 : Icons.lock,
           ),
+
           label: Text(
             canCreateAnotherHunt
                 ? 'Create New Hunt'
                 : 'Unlock Unlimited Hunts',
           ),
         ),
+
         const SizedBox(height: 20),
+
         if (hunts.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(18),
+
               child: Text(
                 'Create a hunt to start tracking an item, model, or SKU.',
               ),
@@ -547,35 +813,19 @@ class HuntsPage extends StatelessWidget {
           ...hunts.map(
             (hunt) => HuntCard(
               hunt: hunt,
+
               onEdit: () =>
                   openEditHunt(context, hunt),
+
               onToggle: () async {
-                await onToggleHunt(hunt.id);
+                await onToggleHunt(
+                  hunt.id,
+                );
               },
-              onDelete: () {
-                showDialog<void>(
-                  context: context,
-                  builder: (dialogContext) =>
-                      AlertDialog(
-                    title: const Text('Delete Hunt?'),
-                    content: Text(
-                      'Delete "${hunt.name}"?',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () =>
-                            Navigator.pop(dialogContext),
-                        child: const Text('Cancel'),
-                      ),
-                      FilledButton(
-                        onPressed: () async {
-                          Navigator.pop(dialogContext);
-                          await onDeleteHunt(hunt.id);
-                        },
-                        child: const Text('Delete'),
-                      ),
-                    ],
-                  ),
+
+              onDelete: () async {
+                await onDeleteHunt(
+                  hunt.id,
                 );
               },
             ),
@@ -602,24 +852,33 @@ class HuntCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin:
+          const EdgeInsets.only(bottom: 12),
+
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding:
+            const EdgeInsets.all(16),
+
         child: Column(
           crossAxisAlignment:
               CrossAxisAlignment.start,
+
           children: [
             Row(
               children: [
                 Expanded(
                   child: Text(
                     hunt.name,
-                    style: const TextStyle(
+
+                    style:
+                        const TextStyle(
                       fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                      fontWeight:
+                          FontWeight.bold,
                     ),
                   ),
                 ),
+
                 Chip(
                   label: Text(
                     hunt.isActive
@@ -629,31 +888,57 @@ class HuntCard extends StatelessWidget {
                 ),
               ],
             ),
+
             const SizedBox(height: 8),
-            Text('Keywords: ${hunt.keywords}'),
-            if (hunt.modelNumber.trim().isNotEmpty)
-              Text('Model: ${hunt.modelNumber}'),
-            if (hunt.sku.trim().isNotEmpty)
-              Text('SKU / UPC: ${hunt.sku}'),
+
+            Text(
+              'Keywords: ${hunt.keywords}',
+            ),
+
+            if (hunt
+                .modelNumber
+                .trim()
+                .isNotEmpty)
+              Text(
+                'Model: ${hunt.modelNumber}',
+              ),
+
+            if (hunt
+                .sku
+                .trim()
+                .isNotEmpty)
+              Text(
+                'SKU / UPC: ${hunt.sku}',
+              ),
+
             const SizedBox(height: 8),
+
             Text(
               'Max buy: \$${hunt.maxBuyPrice.toStringAsFixed(0)}',
             ),
+
             Text(
               'Minimum profit: \$${hunt.minProfit.toStringAsFixed(0)}',
             ),
+
             Text(
               'Radius: ${hunt.radiusMiles} miles',
             ),
+
             const SizedBox(height: 12),
+
             Wrap(
               spacing: 8,
+
               children: [
                 OutlinedButton.icon(
                   onPressed: onEdit,
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Edit'),
+                  icon:
+                      const Icon(Icons.edit),
+                  label:
+                      const Text('Edit'),
                 ),
+
                 OutlinedButton.icon(
                   onPressed: onToggle,
                   icon: Icon(
@@ -661,18 +946,22 @@ class HuntCard extends StatelessWidget {
                         ? Icons.pause
                         : Icons.play_arrow,
                   ),
+
                   label: Text(
                     hunt.isActive
                         ? 'Pause'
                         : 'Resume',
                   ),
                 ),
+
                 TextButton.icon(
                   onPressed: onDelete,
                   icon: const Icon(
                     Icons.delete_outline,
                   ),
-                  label: const Text('Delete'),
+
+                  label:
+                      const Text('Delete'),
                 ),
               ],
             ),
@@ -704,13 +993,26 @@ class HuntFormPage extends StatefulWidget {
 
 class _HuntFormPageState
     extends State<HuntFormPage> {
-  late final TextEditingController nameController;
-  late final TextEditingController keywordController;
-  late final TextEditingController modelController;
-  late final TextEditingController skuController;
-  late final TextEditingController maxBuyController;
-  late final TextEditingController minProfitController;
-  late final TextEditingController radiusController;
+  late final TextEditingController
+      nameController;
+
+  late final TextEditingController
+      keywordController;
+
+  late final TextEditingController
+      modelController;
+
+  late final TextEditingController
+      skuController;
+
+  late final TextEditingController
+      maxBuyController;
+
+  late final TextEditingController
+      minProfitController;
+
+  late final TextEditingController
+      radiusController;
 
   bool isSaving = false;
 
@@ -718,40 +1020,51 @@ class _HuntFormPageState
   void initState() {
     super.initState();
 
-    final hunt = widget.existingHunt;
+    final hunt =
+        widget.existingHunt;
 
-    nameController = TextEditingController(
+    nameController =
+        TextEditingController(
       text: hunt?.name ?? '',
     );
 
-    keywordController = TextEditingController(
+    keywordController =
+        TextEditingController(
       text: hunt?.keywords ?? '',
     );
 
-    modelController = TextEditingController(
+    modelController =
+        TextEditingController(
       text: hunt?.modelNumber ?? '',
     );
 
-    skuController = TextEditingController(
+    skuController =
+        TextEditingController(
       text: hunt?.sku ?? '',
     );
 
-    maxBuyController = TextEditingController(
+    maxBuyController =
+        TextEditingController(
       text: hunt == null
           ? '150'
-          : hunt.maxBuyPrice.toStringAsFixed(0),
+          : hunt.maxBuyPrice
+              .toStringAsFixed(0),
     );
 
-    minProfitController = TextEditingController(
+    minProfitController =
+        TextEditingController(
       text: hunt == null
           ? '75'
-          : hunt.minProfit.toStringAsFixed(0),
+          : hunt.minProfit
+              .toStringAsFixed(0),
     );
 
-    radiusController = TextEditingController(
+    radiusController =
+        TextEditingController(
       text: hunt == null
           ? '30'
-          : hunt.radiusMiles.toString(),
+          : hunt.radiusMiles
+              .toString(),
     );
   }
 
@@ -764,43 +1077,58 @@ class _HuntFormPageState
     maxBuyController.dispose();
     minProfitController.dispose();
     radiusController.dispose();
+
     super.dispose();
   }
 
   Future<void> saveHunt() async {
-    final name = nameController.text.trim();
-    final keywords = keywordController.text.trim();
+    final name =
+        nameController.text.trim();
 
-    if (name.isEmpty || keywords.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    final keywords =
+        keywordController.text.trim();
+
+    if (name.isEmpty ||
+        keywords.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
           content: Text(
             'Enter a hunt name and keywords.',
           ),
         ),
       );
+
       return;
     }
 
     final maxBuy =
-        double.tryParse(maxBuyController.text.trim());
+        double.tryParse(
+      maxBuyController.text.trim(),
+    );
 
     final minProfit =
-        double.tryParse(minProfitController.text.trim());
+        double.tryParse(
+      minProfitController.text.trim(),
+    );
 
     final radius =
-        int.tryParse(radiusController.text.trim());
+        int.tryParse(
+      radiusController.text.trim(),
+    );
 
     if (maxBuy == null ||
         minProfit == null ||
         radius == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
           content: Text(
             'Check your price, profit, and radius values.',
           ),
         ),
       );
+
       return;
     }
 
@@ -808,18 +1136,26 @@ class _HuntFormPageState
       isSaving = true;
     });
 
-    final existing = widget.existingHunt;
+    final existing =
+        widget.existingHunt;
 
     final hunt = Hunt(
       id: widget.huntId,
       name: name,
       keywords: keywords,
-      modelNumber: modelController.text.trim(),
-      sku: skuController.text.trim(),
+
+      modelNumber:
+          modelController.text.trim(),
+
+      sku:
+          skuController.text.trim(),
+
       maxBuyPrice: maxBuy,
       minProfit: minProfit,
       radiusMiles: radius,
-      isActive: existing?.isActive ?? true,
+
+      isActive:
+          existing?.isActive ?? true,
     );
 
     await widget.onSave(hunt);
@@ -832,86 +1168,139 @@ class _HuntFormPageState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
+      appBar:
+          AppBar(title: Text(widget.title)),
+
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding:
+            const EdgeInsets.all(20),
+
         children: [
           TextField(
-            controller: nameController,
-            decoration: const InputDecoration(
+            controller:
+                nameController,
+
+            decoration:
+                const InputDecoration(
               labelText: 'Hunt name',
-              hintText: 'Milwaukee Tool Hunter',
+
+              hintText:
+                  'Milwaukee Tool Hunter',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: keywordController,
-            decoration: const InputDecoration(
+            controller:
+                keywordController,
+
+            decoration:
+                const InputDecoration(
               labelText: 'Keywords',
-              hintText: 'Milwaukee M18, Packout',
+
+              hintText:
+                  'Milwaukee M18, Packout',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: modelController,
-            decoration: const InputDecoration(
-              labelText: 'Model number (optional)',
-              hintText: '3697-25CX',
+            controller:
+                modelController,
+
+            decoration:
+                const InputDecoration(
+              labelText:
+                  'Model number (optional)',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: skuController,
-            decoration: const InputDecoration(
-              labelText: 'SKU / UPC (optional)',
+            controller:
+                skuController,
+
+            decoration:
+                const InputDecoration(
+              labelText:
+                  'SKU / UPC (optional)',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: maxBuyController,
+            controller:
+                maxBuyController,
+
             keyboardType:
-                const TextInputType.numberWithOptions(
+                const TextInputType
+                    .numberWithOptions(
               decimal: true,
             ),
-            decoration: const InputDecoration(
-              labelText: 'Maximum buy price',
+
+            decoration:
+                const InputDecoration(
+              labelText:
+                  'Maximum buy price',
+
               prefixText: '\$',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: minProfitController,
+            controller:
+                minProfitController,
+
             keyboardType:
-                const TextInputType.numberWithOptions(
+                const TextInputType
+                    .numberWithOptions(
               decimal: true,
             ),
-            decoration: const InputDecoration(
-              labelText: 'Minimum profit goal',
+
+            decoration:
+                const InputDecoration(
+              labelText:
+                  'Minimum profit goal',
+
               prefixText: '\$',
             ),
           ),
+
           const SizedBox(height: 12),
 
           TextField(
-            controller: radiusController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Search radius',
+            controller:
+                radiusController,
+
+            keyboardType:
+                TextInputType.number,
+
+            decoration:
+                const InputDecoration(
+              labelText:
+                  'Search radius',
+
               suffixText: ' miles',
             ),
           ),
+
           const SizedBox(height: 24),
 
           FilledButton.icon(
-            onPressed: isSaving ? null : saveHunt,
-            icon: const Icon(Icons.save),
+            onPressed:
+                isSaving
+                    ? null
+                    : saveHunt,
+
+            icon:
+                const Icon(Icons.save),
+
             label: Text(
               isSaving
                   ? 'SAVING...'
@@ -930,65 +1319,88 @@ class UpgradePage extends StatelessWidget {
     required this.onUpgrade,
   });
 
-  final Future<void> Function() onUpgrade;
+  final Future<void> Function()
+      onUpgrade;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Avid Hunter'),
+      appBar:
+          AppBar(
+        title:
+            const Text('Avid Hunter'),
       ),
+
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding:
+            const EdgeInsets.all(24),
+
         children: [
           const Text(
             '🔥',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 60),
+
+            textAlign:
+                TextAlign.center,
+
+            style:
+                TextStyle(fontSize: 60),
           ),
+
           const Text(
             'Become an Avid Hunter',
-            textAlign: TextAlign.center,
+
+            textAlign:
+                TextAlign.center,
+
             style: TextStyle(
               fontSize: 28,
-              fontWeight: FontWeight.w900,
+              fontWeight:
+                  FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Unlock the full Profit Hunter experience.',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
+
+          const SizedBox(height: 20),
 
           const ListTile(
-            leading: Icon(Icons.all_inclusive),
-            title: Text('Unlimited Hunts'),
-          ),
+            leading:
+                Icon(Icons.all_inclusive),
 
-          const ListTile(
-            leading: Icon(Icons.psychology_alt),
-            title: Text('Advanced AI Analysis'),
+            title:
+                Text('Unlimited Hunts'),
           ),
 
           const ListTile(
-            leading: Icon(Icons.notifications_active),
-            title: Text('Priority Alerts'),
+            leading:
+                Icon(Icons.psychology_alt),
+
+            title:
+                Text(
+              'Advanced AI Analysis',
+            ),
           ),
 
           const ListTile(
-            leading: Icon(Icons.analytics_outlined),
-            title: Text('Advanced Flip Analytics'),
+            leading:
+                Icon(
+              Icons.notifications_active,
+            ),
+
+            title:
+                Text('Priority Alerts'),
           ),
 
           const SizedBox(height: 20),
 
           const Text(
             '\$9.99/month',
-            textAlign: TextAlign.center,
+
+            textAlign:
+                TextAlign.center,
+
             style: TextStyle(
               fontSize: 28,
-              fontWeight: FontWeight.w900,
+              fontWeight:
+                  FontWeight.w900,
             ),
           ),
 
@@ -998,11 +1410,15 @@ class UpgradePage extends StatelessWidget {
             onPressed: () async {
               await onUpgrade();
 
-              if (!context.mounted) return;
+              if (!context.mounted) {
+                return;
+              }
 
               Navigator.pop(context);
             },
-            child: const Text(
+
+            child:
+                const Text(
               'START AVID HUNTER',
             ),
           ),
@@ -1011,7 +1427,9 @@ class UpgradePage extends StatelessWidget {
 
           const Text(
             'Prototype only: no payment is charged yet.',
-            textAlign: TextAlign.center,
+
+            textAlign:
+                TextAlign.center,
           ),
         ],
       ),
@@ -1024,41 +1442,10 @@ class DealsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: const [
-        Text(
-          '🔥 Deal Feed',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        SizedBox(height: 8),
-        Text('AI-ranked sample opportunities'),
-        SizedBox(height: 20),
-
-        DealCard(
-          title: 'Milwaukee M18 Fuel Kit',
-          buyPrice: 120,
-          resalePrice: 260,
-          hunterScore: 94,
-        ),
-
-        DealCard(
-          title: 'Solid Wood Dresser',
-          buyPrice: 50,
-          resalePrice: 225,
-          hunterScore: 91,
-        ),
-
-        DealCard(
-          title: 'DeWalt 20V Tool Bundle',
-          buyPrice: 100,
-          resalePrice: 240,
-          hunterScore: 95,
-        ),
-      ],
+    return const SimplePage(
+      title: '🔥 Deal Feed',
+      description:
+          'Your deal feed is still using sample listings for now.',
     );
   }
 }
@@ -1071,7 +1458,7 @@ class FlipsPage extends StatelessWidget {
     return const SimplePage(
       title: '📦 My Flips',
       description:
-          'Track what you paid, expenses, selling price, and realized profit.',
+          'Flip tracking will be connected in the next build.',
     );
   }
 }
@@ -1079,28 +1466,39 @@ class FlipsPage extends StatelessWidget {
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
-    required this.plan,
+    required this.profile,
     required this.activeHuntCount,
     required this.onUpgrade,
+    required this.onSignOut,
   });
 
-  final HunterPlan plan;
+  final UserProfile profile;
   final int activeHuntCount;
-  final Future<void> Function() onUpgrade;
+
+  final Future<void> Function()
+      onUpgrade;
+
+  final Future<void> Function()
+      onSignOut;
 
   @override
   Widget build(BuildContext context) {
     final isAvid =
-        plan == HunterPlan.avid;
+        profile.plan ==
+            HunterPlan.avid;
 
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding:
+          const EdgeInsets.all(20),
+
       children: [
         const Text(
           '⚙️ Settings',
+
           style: TextStyle(
             fontSize: 28,
-            fontWeight: FontWeight.w900,
+            fontWeight:
+                FontWeight.w900,
           ),
         ),
 
@@ -1108,32 +1506,46 @@ class SettingsPage extends StatelessWidget {
 
         Card(
           child: ListTile(
-            leading: const Icon(
+            leading:
+                const Icon(Icons.person),
+
+            title:
+                Text(profile.name),
+
+            subtitle:
+                Text(profile.email),
+          ),
+        ),
+
+        Card(
+          child: ListTile(
+            leading:
+                const Icon(
               Icons.workspace_premium,
             ),
+
             title: Text(
               isAvid
                   ? '🔥 Avid Hunter'
                   : '🟢 Casual Hunter',
             ),
+
             subtitle: Text(
               isAvid
                   ? 'Unlimited hunts'
                   : '$activeHuntCount / 2 active hunts',
             ),
-            trailing: isAvid
-                ? null
-                : const Icon(
-                    Icons.chevron_right,
-                  ),
+
             onTap: isAvid
                 ? null
                 : () {
-                    Navigator.of(context).push(
+                    Navigator.of(context)
+                        .push(
                       MaterialPageRoute(
                         builder: (_) =>
                             UpgradePage(
-                          onUpgrade: onUpgrade,
+                          onUpgrade:
+                              onUpgrade,
                         ),
                       ),
                     );
@@ -1141,31 +1553,18 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
 
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.notifications),
-            title: Text('Notifications'),
-            subtitle:
-                Text('Deal alerts and thresholds'),
-          ),
-        ),
+        const SizedBox(height: 20),
 
-        const Card(
-          child: ListTile(
-            leading:
-                Icon(Icons.location_on_outlined),
-            title: Text('Search Area'),
-            subtitle:
-                Text('Location and radius preferences'),
-          ),
-        ),
+        OutlinedButton.icon(
+          onPressed: () async {
+            await onSignOut();
+          },
 
-        const Card(
-          child: ListTile(
-            leading:
-                Icon(Icons.privacy_tip_outlined),
-            title: Text('Privacy & Security'),
-          ),
+          icon:
+              const Icon(Icons.logout),
+
+          label:
+              const Text('SIGN OUT'),
         ),
       ],
     );
@@ -1185,20 +1584,28 @@ class SimplePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding:
+          const EdgeInsets.all(20),
+
       children: [
         Text(
           title,
-          style: const TextStyle(
+
+          style:
+              const TextStyle(
             fontSize: 28,
-            fontWeight: FontWeight.w900,
+            fontWeight:
+                FontWeight.w900,
           ),
         ),
+
         const SizedBox(height: 20),
 
         Text(
           description,
-          style: const TextStyle(
+
+          style:
+              const TextStyle(
             fontSize: 17,
           ),
         ),
@@ -1221,77 +1628,26 @@ class StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding:
+            const EdgeInsets.all(18),
+
         child: Row(
           mainAxisAlignment:
-              MainAxisAlignment.spaceBetween,
+              MainAxisAlignment
+                  .spaceBetween,
+
           children: [
             Text(title),
 
             Text(
               value,
-              style: const TextStyle(
+
+              style:
+                  const TextStyle(
                 fontSize: 22,
-                fontWeight: FontWeight.bold,
+                fontWeight:
+                    FontWeight.bold,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class DealCard extends StatelessWidget {
-  const DealCard({
-    super.key,
-    required this.title,
-    required this.buyPrice,
-    required this.resalePrice,
-    required this.hunterScore,
-  });
-
-  final String title;
-  final double buyPrice;
-  final double resalePrice;
-  final int hunterScore;
-
-  @override
-  Widget build(BuildContext context) {
-    final profit =
-        resalePrice - buyPrice;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            Text(
-              'Buy: \$${buyPrice.toStringAsFixed(0)}',
-            ),
-
-            Text(
-              'Estimated resale: \$${resalePrice.toStringAsFixed(0)}',
-            ),
-
-            Text(
-              'Estimated profit: +\$${profit.toStringAsFixed(0)}',
-            ),
-
-            Text(
-              'Hunter Score: $hunterScore/100',
             ),
           ],
         ),
